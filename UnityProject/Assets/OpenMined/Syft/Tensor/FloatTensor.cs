@@ -291,6 +291,35 @@ namespace OpenMined.Syft.Tensor
                     this.Ceil(inline: true);
                     return this.id + "";
                 }
+                case "clamp":
+                {
+
+                    float ? min = null;
+                    float ? max = null; 
+
+                    if (msgObj.tensorIndexParams[0]=="None")
+                    {
+                        min = null;  
+                    }
+                    else
+                    {
+                        min = float.Parse(msgObj.tensorIndexParams[0]);
+                    }
+
+                    if (msgObj.tensorIndexParams[1]=="None")
+                    {
+                        max = null;  
+                    }
+                    else
+                    {
+                        max = float.Parse(msgObj.tensorIndexParams[1]);
+                    }
+
+                    FloatTensor result = (FloatTensor) Clamp(min, max);
+
+                    return result.Id.ToString();
+                }
+
                 case "contiguous":
                 {
                     var result = Contiguous();
@@ -586,6 +615,11 @@ namespace OpenMined.Syft.Tensor
                 {
                     this.Pow(float.Parse(msgObj.tensorIndexParams[0]), inline: true);
                     return this.id + "";
+                }
+                case "random_":
+                {
+                    var result = Random(shape, inline: true);
+                    return result.Id.ToString();
                 }
                 case "reciprocal":
                 {

@@ -365,6 +365,38 @@ namespace OpenMined.Syft.Tensor
             return result;
         }
 
+        public FloatTensor Clamp(float ? min = null, float ? max = null, bool inline = false)
+        {
+
+            var result = inline ? this : this.emptyTensorCopy();
+
+            if (dataOnGpu)
+            {
+            // TODO implement GPU   
+            }
+
+            var nCpu = SystemInfo.processorCount;
+                Parallel.For(0, nCpu, workerId => {
+                    var max_p = size * (workerId + 1) / nCpu;
+                    for (var i = size * workerId / nCpu; i < max_p; i++)        
+                    {   
+                        if ((this[i] < min) & min.HasValue)
+                        {
+                          result[i] =  (float) min;   
+                        }
+                        else if ((this[i] > max) & max.HasValue)
+                        {
+                          result[i] = (float) max ;   
+                        }
+                        else 
+                        { 
+                          result[i] = this[i] ;  
+                        }
+                    };
+                });   
+            return result;
+        }
+
         public FloatTensor Contiguous(FloatTensor result = null)
         {
 
@@ -877,23 +909,6 @@ namespace OpenMined.Syft.Tensor
             return result.View(original_shape, inline:inline);
         }
 
-        public bool IsContiguous()
-        {
-            long z = 1;
-            int d;
-            for(d = shape.Length-1; d >= 0; d--)
-            {
-                if(shape[d] != 1)
-                {
-                    if (strides[d] == z) {
-                        z *= shape[d];
-                    } else {
-                        return false;
-                    }
-                }
-            }
-            return true;
-        }
 
         public FloatTensor Log1p(bool inline = false)
         {	
@@ -1111,8 +1126,27 @@ namespace OpenMined.Syft.Tensor
             
             // TODO: Implement GPU op. with GPU tests.
             return Reduce(dim, keepdim, (acc, val, index, arr) => acc * val, (val, len) => val, creation_op:"prod_"+dim);
-        }        
-        
+        }
+
+        public FloatTensor Random(int[] dims, bool inline = true)
+        {
+            int[] dims_prod = {1};
+            foreach (int dim in dims)
+            {
+                dims_prod[0] *= dim;
+            }
+
+            if (dataOnGpu)
+            {
+                throw new NotImplementedException();
+            }
+            FloatTensor result = inline ? this : factory.ctrl.floatTensorFactory.Create(dims);
+            for (int i = 0; i < dims_prod[0]; i++)
+            {
+                result.Data[i] = UnityEngine.Random.value;
+            }
+            return result;
+        }
         public FloatTensor Reciprocal(bool inline = false)
         {
             var result = inline ? this : this.emptyTensorCopy();
