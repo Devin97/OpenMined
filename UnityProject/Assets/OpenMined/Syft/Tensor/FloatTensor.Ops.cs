@@ -75,8 +75,7 @@ namespace OpenMined.Syft.Tensor
 		public FloatTensor Abs(bool inline = false, FloatTensor result = null)
 		// Returns a new Tensor with the smallest integer greater than or equal to each element
 		{
-            result = HookGraph(ref result, "abs", inline);		
-
+            result = HookGraph(ref result, "abs", inline);
 			if (dataOnGpu) {
 				if (inline) { AbsGPU_ (); return this; }
 				else { return AbsGPU (result); }
@@ -546,6 +545,22 @@ namespace OpenMined.Syft.Tensor
             return result_3d.View(shape);
         }
 
+        public void Delete()
+        {
+            // Lower the usage count by 1 when a tensor is deleted.
+            this.Usage_count = this.Usage_count -1;
+            // Only delete a tensor if it is just used once
+            if (this.Usage_count < 1)
+            {
+                // When you delete a tensor also remove it from the graph of its creator(s)
+                foreach(int creator_id in this.creators)
+                {
+                    factory.ctrl.floatTensorFactory.Get(creator_id).RemoveChild(this.Id);
+                }
+                factory.ctrl.floatTensorFactory.Delete(this.Id);
+            }
+        }
+
         public FloatTensor Div(FloatTensor x, bool inline = false, FloatTensor result = null)
         {
             if (!IsContiguous() || !x.IsContiguous()) {
@@ -712,19 +727,22 @@ namespace OpenMined.Syft.Tensor
             }
         }
         
-        public FloatTensor Fill(FloatTensor value, int starting_offset, int length_to_fill, bool inline = true)
+        public FloatTensor Fill(FloatTensor value, int starting_offset, int length_to_fill, bool inline = true, int starting_offset_fill = 0)
         {
-            
-            if(length_to_fill > this.Size)
+
+            if(length_to_fill > (this.Size - starting_offset_fill))
                 throw new InvalidOperationException("Tensor not big enough. this.size == " + this.Size + " whereas length_to_fill == " + length_to_fill);
-            
+
             if (!inline || dataOnGpu)
             {
                 throw new NotImplementedException();
             }
             else
             {
-                for (int i = 0; i < length_to_fill; i++) data[i] = value.Data[starting_offset + i];
+                for (int i = 0; i < length_to_fill; i++)
+                {
+                    data[starting_offset_fill + i] = value.Data[starting_offset + i];
+                }
                 return this;
             }
         }
@@ -770,9 +788,57 @@ namespace OpenMined.Syft.Tensor
             factory.ctrl.intTensorFactory.Delete(i.Id);
             return subset;
         }
+
+        
+        // this probably isn't the best/right name for this function
+        // but basically the normal indexselect requies you to pass in a list of indices
+        // that is exactly one dimension (a list) and a separate parameter that selects
+        // which dim the list of indices should be applied to. In this one, however, indices
+        // is has to same shape as the tensor itx indexing into except for the last dimension, which
+        // indices must not have as a dimension (that's the one being indexed).
+        public FloatTensor ShapedIndexSelect(IntTensor indices, FloatTensor result = null)
+        {
+            if(indices.Shape.Length != shape.Length-1)
+                throw new Exception("Indices must have exactly one dimension less than tensor");
+                
+            for (int i = 0; i < shape.Length-1; i++)
+            {
+                if (shape[i] != indices.Shape[i])
+                {
+                    throw new Exception(
+                        "If you index select with -1, indices shape must match tensor shape for all dims except the last");
+                }
+            }
+                
+            int[] flat_left = new int[2];
+            flat_left[1] = shape[shape.Length - 1];
+            flat_left[0] = 1;
+            for (int i = 0; i < shape.Length - 1; i++) flat_left[i] *= shape[i];
+            
+            int[] slice_off_right = new int[shape.Length - 1];
+            for (int i = 0; i < slice_off_right.Length; i++) slice_off_right[i] = shape[i];
+            
+                
+            result = HookGraph(ref result, "shaped_index_select_" + indices.Id, inline:false, resultShape:slice_off_right, indices:new IntTensor[1]{indices});
+
+            
+            for (int i = 0; i < result.Size; i++)
+            {
+                result.data[i] = this.Data[i * flat_left[1] + indices.Data[i]];
+            }
+
+            return result;
+        }
+        
         
         public FloatTensor IndexSelect(IntTensor indices, int dim, FloatTensor result = null)
         {
+
+            if (dim == -1)
+            {
+                return ShapedIndexSelect(indices);
+            }
+            
             if (DataOnGpu)
             {
                 throw new NotImplementedException();
@@ -837,9 +903,51 @@ namespace OpenMined.Syft.Tensor
             
             return result.View(result_dim);
         }
+        
+        
+        // regular index add expects a single list as a tensor - and you select which dimension that list is
+        // used to index into in a different parameter. In this method, the shape of indices itself is instead used
+        // to index into the tensor - ShapedIndexSelect has a similar relationship to IndexSelect as this method has
+        // to IndexAdd
+        public FloatTensor ShapedIndexAdd(IntTensor indices, FloatTensor x, bool inline = false, FloatTensor result = null)
+        {
+            if(indices.Shape.Length != shape.Length-1)
+                throw new Exception("Indices must have exactly one dimension less than tensor");
+                
+            for (int i = 0; i < shape.Length-1; i++)
+            {
+                if (shape[i] != indices.Shape[i])
+                {
+                    throw new Exception(
+                        "If you index select with -1, indices shape must match tensor shape for all dims except the last");
+                }
+            }
+
+            int[] flat_left = this.Shape;
+            
+            result = HookGraph(ref result, "shaped_index_add_" + indices.Id + "_" + x.id, inline:inline, resultShape:this.Shape, indices:new IntTensor[1]{indices});
+ 
+            /*for (int i = 0; i < result.Size; i++)
+            {
+                result.data[i] = this.Data[i * flat_left[1] + indices.Data[i]];
+            }*/
+            
+            int j = 0;
+            for (int i = 0; i < indices.Size; i++)
+            {
+                result.Data[i * flat_left[1] + indices.Data[i]] += x.Data[i];
+            }
+
+            return result;
+        }
 
         public FloatTensor IndexAdd(IntTensor indices, int dim, FloatTensor x, FloatTensor result = null, bool inline = false)
         {
+            if (dim == -1)
+            {
+                return ShapedIndexAdd(indices, x, inline:inline);
+            }
+            
             if (DataOnGpu)
             {
                 throw new NotImplementedException();
@@ -937,6 +1045,18 @@ namespace OpenMined.Syft.Tensor
             return result;
         }
 
+        public FloatTensor LogSoftmax(int dim = -1, bool inline = false, FloatTensor result = null)
+        {
+            if(dataOnGpu)
+            {
+                throw new NotImplementedException();
+            }
+
+            result = Softmax(dim).Log();
+
+            return result;
+        }
+
         public FloatTensor Max(int dim = -1, bool keepdim = false)
         {
             if (!IsContiguous()) {
@@ -944,7 +1064,7 @@ namespace OpenMined.Syft.Tensor
             }
 
             // TODO: Implement GPU op. with GPU tests.
-            return Reduce(dim, keepdim, (acc, val, index, arr) => acc > val ? acc : val, (val, len) => val, creation_op:"max_"+dim);
+            return Reduce(dim, keepdim, (acc, val, index, arr) => acc > val ? acc : val, (val, len) => val, creation_op:"max_"+dim+"_"+keepdim);
         }        
 
         public FloatTensor Mean(int dim = -1, bool keepdim = false)
@@ -954,7 +1074,7 @@ namespace OpenMined.Syft.Tensor
             }
             
             // TODO: Implement GPU op. with GPU tests.
-            return Reduce(dim, keepdim, (acc, val, index, arr) => acc + val, (val, len) => val / (float) len, creation_op:"mean_"+dim);
+            return Reduce(dim, keepdim, (acc, val, index, arr) => acc + val, (val, len) => val / (float) len, creation_op:"mean_"+dim+"_"+keepdim);
         }        
         
         public FloatTensor Min(int dim = -1, bool keepdim = false)
@@ -964,7 +1084,7 @@ namespace OpenMined.Syft.Tensor
             }
 
             // TODO: Implement GPU op. with GPU tests.
-            return Reduce(dim, keepdim, (acc, val, index, arr) => acc < val ? acc : val, (val, len) => val, creation_op:"min_"+dim);
+            return Reduce(dim, keepdim, (acc, val, index, arr) => acc < val ? acc : val, (val, len) => val, creation_op:"min_"+dim+"_"+keepdim);
         }
 
         
@@ -1072,6 +1192,17 @@ namespace OpenMined.Syft.Tensor
             result.Data = data.AsParallel().Select(x => -x).ToArray();
             return result;
         }
+
+        public FloatTensor Norm(int dim = -1, bool keepdim = false, float p = 2, FloatTensor result = null)
+        {
+            if (p <= 0){
+                throw new InvalidOperationException("p must be greater than 0");
+            }
+            result = Abs().Pow(p).Sum(dim, keepdim).Pow(1/p);
+            
+            return result;
+
+        }
         
         public FloatTensor Pow(FloatTensor x, bool inline = false, FloatTensor result = null)
         {
@@ -1125,17 +1256,27 @@ namespace OpenMined.Syft.Tensor
             }
             
             // TODO: Implement GPU op. with GPU tests.
-            return Reduce(dim, keepdim, (acc, val, index, arr) => acc * val, (val, len) => val, creation_op:"prod_"+dim);
+            return Reduce(dim, keepdim, (acc, val, index, arr) => acc * val, (val, len) => val, creation_op:"prod_"+dim+"_"+keepdim);
         }
 
-        public FloatTensor Random(int[] dims, bool inline = true)
+        public FloatTensor Random(int[] dims, float start = 0F, float? to = null, bool inline = true)
         {
+            // when "to" is not set use 2^mantissa as max value to ensure every value is representable
+            // Reference: http://pytorch.org/docs/master/tensors.html#torch.Tensor.random_
+            float to_ = 0F;
+            if (to == null)
+            {
+                to_ = (float)Mathf.Pow(2F, 24F);
+            }
+            else
+            {
+                to_ = (float)to;
+            }
             int[] dims_prod = {1};
             foreach (int dim in dims)
             {
                 dims_prod[0] *= dim;
             }
-
             if (dataOnGpu)
             {
                 throw new NotImplementedException();
@@ -1143,7 +1284,7 @@ namespace OpenMined.Syft.Tensor
             FloatTensor result = inline ? this : factory.ctrl.floatTensorFactory.Create(dims);
             for (int i = 0; i < dims_prod[0]; i++)
             {
-                result.Data[i] = UnityEngine.Random.value;
+                result.Data[i] = UnityEngine.Random.Range(start, to_);
             }
             return result;
         }
@@ -1244,7 +1385,7 @@ namespace OpenMined.Syft.Tensor
             });
 
             return result;
-        }        
+        }           
         
         public FloatTensor ReLU(bool inline = false, FloatTensor result = null)
         {
@@ -1578,44 +1719,75 @@ namespace OpenMined.Syft.Tensor
             return result;
         }
 
-        public FloatTensor Std(int dim = -1, bool unbiased=true)
+        internal FloatTensor[] MakeSplits(int[] splitSections, int dim = 0)
         {
-            FloatTensor avg;
-            
-            if (dim == -1)
+            int numSplits = splitSections.Length;
+            var splits = new FloatTensor[numSplits];
+            int offset = 0;
+
+            //Gather subset of elements corresponding to each split 
+            for(int i = 0; i < numSplits; i++)
             {
-                var mean = Mean(dim: dim);
-                var diff = this.Sub(mean);
-                var sqdiff = diff.Pow(2);
-                if (unbiased)
-                {
-                    avg = sqdiff.Sum().Div(shape[0] - 1); // Bessel's correction
-                }
-                else
-                {
-                    avg = sqdiff.Mean(); 
-                }
-                var result = avg.Sqrt();
-                return result;
+                int[] splitShape = (int[]) Shape.Clone();
+                int splitSize = splitSections[i];
+                splitShape[dim] = splitSize;
+                splits[i] = this.IndexSelect(new List<int>(Enumerable.Range(offset, splitSize)), dim);
+
+                offset += splitSize;
             }
-            else
+            return splits;
+        }
+        
+        public FloatTensor[] Split(int splitSize, int dim = 0)
+        {
+            if (!IsContiguous())
             {
-                var mean = Mean(dim:dim, keepdim:true);
-                var diff = this.Sub(mean);
-                var sqdiff = diff.Pow(2);
-                
-                if(unbiased)
-                {
-                    avg = sqdiff.Sum(dim).Div(shape[0] - 1); // Bessel's correction
-                }
-                else
-                {
-                    avg = sqdiff.Mean(dim); 
-                }
-                var result = avg.Sqrt();
-                return result;
+                throw new InvalidOperationException ("Tensor must be contiguous, call Contiguous() to convert");
             }
-            
+
+            int len = shape.Length;
+
+            AssertDim(dim, len);
+
+            int numSplits = (shape[dim] + splitSize - 1)/splitSize;
+            int lastSplitSize = splitSize - (splitSize*numSplits - shape[dim]);
+            var splitSections = new int[numSplits];
+
+            for(int i = 0; i < numSplits; i++){
+                splitSections[i] = (i < (numSplits - 1)) ? splitSize : lastSplitSize;
+            }
+
+			return MakeSplits(splitSections, dim);
+        }
+
+        public FloatTensor[] Split(int[] splitSections, int dim = 0)
+        {
+
+            if (!IsContiguous())
+            {
+                throw new InvalidOperationException ("Tensor must be contiguous, call Contiguous() to convert");
+            }
+
+            int len = shape.Length;
+
+            AssertDim(dim, len);
+
+            int numSplits = splitSections.Length;
+            int sumSplitSizes = 0;
+        
+            for (int i = 0; i < numSplits; i++)
+            {
+                sumSplitSizes += splitSections[i];
+            }
+
+            if (sumSplitSizes != shape[dim])
+            {
+                throw new InvalidOperationException 
+                (String.Format("Sum of split sizes {0} != size {1} of dim {2}", 
+					sumSplitSizes,  shape[dim], dim));
+            }
+
+            return MakeSplits(splitSections, dim);
         }
         
         // TODO: Softmax will run on GPU, when below OPS have a GPU implementation!
@@ -1775,6 +1947,25 @@ namespace OpenMined.Syft.Tensor
             return result;
         }        
 
+        public FloatTensor Std(int dim = -1, bool keepdim = false, bool unbiased = true, FloatTensor result = null)
+        {
+            if(dataOnGpu)
+            {
+                throw new NotImplementedException();
+            }
+
+            if (!IsContiguous())
+            {
+                throw new InvalidOperationException ("Tensor must be contiguous, call Contiguous() to convert");
+            }
+
+            result = Var(dim, keepdim, unbiased).Sqrt();
+
+            // TODO: Implement GPU op. with GPU tests.
+            return result;
+        }
+
+
         public FloatTensor Sub(FloatTensor x, bool inline = false, FloatTensor result = null)
         {
             if (!IsContiguous() || !x.IsContiguous()) {
@@ -1851,7 +2042,7 @@ namespace OpenMined.Syft.Tensor
 
             // TODO: Implement GPU op. with GPU tests.
 
-            return Reduce(dim, keepdim, (acc, val, index, arr) => acc + val, (val, len) => val, creation_op:"sum_"+dim);
+            return Reduce(dim, keepdim, (acc, val, index, arr) => acc + val, (val, len) => val, creation_op:"sum_"+dim+"_"+keepdim);
 
         }        
         
@@ -1881,15 +2072,15 @@ namespace OpenMined.Syft.Tensor
             return result;
         }
 
-        public FloatTensor Transpose()
+        public FloatTensor Transpose(bool inline = false)
         {
             if (shape.Length != 2)
                 throw new InvalidOperationException("Need to specify parameters for tensors with more than 2 dims.");
 
-            return Transpose(0, 1);
+            return Transpose(0, 1, inline:inline);
         }
 
-        public FloatTensor Transpose(int dimension1, int dimension2, FloatTensor result = null)
+        public FloatTensor Transpose(int dimension1, int dimension2, FloatTensor result = null, bool inline = false)
         {
             if (!IsContiguous()) {
                 throw new InvalidOperationException ("Tensor must be contiguous, call Contiguous() to convert");
@@ -1912,7 +2103,7 @@ namespace OpenMined.Syft.Tensor
             newShape[dimension2] = tmpDim;
 
             //var result = new FloatTensor(_controller: controller, _shape: newShape, _shader: this.shader);
-            result = HookGraph(ref result, creation_op:"transpose", inline:false, resultShape:newShape);
+            result = HookGraph(ref result, creation_op:"transpose", inline:inline, resultShape:newShape);
   
             var nCpu = SystemInfo.processorCount;
             Parallel.For(0, nCpu, workerId =>
@@ -1986,6 +2177,22 @@ namespace OpenMined.Syft.Tensor
                 : Enumerable.Range(0, shape.Min()).AsParallel().Select(i => this[i * stride]).Sum();
         }
 
+        public FloatTensor Uniform(int[] dims, float start = 0.0F, float to = 1.0F, bool inline = false)
+        {
+            int dims_prod = 1;
+            foreach (int dim in dims)
+            {
+                dims_prod *= dim;
+            }
+            if (dataOnGpu) throw new NotImplementedException();
+            FloatTensor result = inline ? this : factory.ctrl.floatTensorFactory.Create(dims);
+            for (int i = 0; i < dims_prod; i++)
+            {
+                result.Data[i] = UnityEngine.Random.Range(start, to);
+            }
+            return result;
+        }
+
         public FloatTensor Unsqueeze(int dim, bool inline = false)
         {
             int[] new_shape = new int[shape.Length + 1];
@@ -2005,12 +2212,64 @@ namespace OpenMined.Syft.Tensor
 
             return View(new_shape, inline:inline);
         }        
+
+
+        public FloatTensor Var(int dim = -1, bool keepdim = false, bool unbiased = true, FloatTensor result = null)
+        {
+            if(dataOnGpu)
+            {
+                throw new NotImplementedException();
+            }
+
+            if (!IsContiguous())
+            {
+                throw new InvalidOperationException ("Tensor must be contiguous, call Contiguous() to convert");
+            }
+
+            if (unbiased)
+            {
+                //Bessel's correction: var(x) =  sum((x - mean(x))^2)/(n-1) = sum(x^2)/(n-1) - (sum(x)^2)/(n*(n-1))
+                int numElements = (dim == -1) ? size : shape[dim];
+                var meanTerm = Sum(dim, keepdim).Pow(2).Div(numElements);
+                var squareTerm = Pow(2).Sum(dim, keepdim);
+                result = squareTerm.Sub(meanTerm).Div(numElements-1);
+            }
+
+            else
+            {
+                var meanSquare = Mean(dim, keepdim).Pow(2);
+                var squareMean = Pow(2).Mean(dim, keepdim);
+                result = squareMean.Sub(meanSquare);
+            }
+
+            // TODO: Implement GPU op. with GPU tests.
+            return result;
+        }
         
         public FloatTensor View(int[] new_shape, bool inline = false, FloatTensor result = null)
         {
             if (!IsContiguous()) {
                 throw new InvalidOperationException ("Tensor must be contiguous, call Contiguous() to convert");
             }
+
+            // support -1 in new_shape
+            var index = Array.IndexOf(new_shape, -1);
+            if(index != -1) 
+            {
+                int tempSize = 1;
+                Console.WriteLine(new_shape.Length);
+                foreach(var s in new_shape)
+                {
+                    Console.WriteLine(s);
+                    if(s != -1)
+                    {
+                        tempSize *= s;
+                    }
+                }
+
+                new_shape[index] = size / tempSize;
+            }
+            
             if (inline == true)
             {
                 

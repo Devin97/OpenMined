@@ -1,5 +1,9 @@
 using UnityEngine;
 using OpenMined.Network.Controllers;
+using System.Collections;
+using System.IO;
+using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 
 namespace OpenMined.Network.Servers
 {
@@ -10,7 +14,7 @@ namespace OpenMined.Network.Servers
 		private NetMqPublisher _netMqPublisher;
 		private string _response;
 
-		private SyftController controller;
+		public SyftController controller;
 
 		[SerializeField] private ComputeShader shader;
 
@@ -30,7 +34,7 @@ namespace OpenMined.Network.Servers
 		private string HandleMessage(string message)
 		{
 			//Debug.LogFormat("HandleMessage... {0}", message);
-			return controller.processMessage(message);
+			return controller.processMessage(message, this);
 		}
 
 		private void OnDestroy()
@@ -41,5 +45,6 @@ namespace OpenMined.Network.Servers
 		public ComputeShader Shader {
 			get { return shader; }
 		}
+
 	}
 }

@@ -1,9 +1,11 @@
-﻿using System;
+using System;
 using UnityEngine;
 using OpenMined.Network.Utils;
 using OpenMined.Network.Controllers;
 using System.Collections.Generic;
 using OpenMined.Syft.Tensor.Factories;
+using System.Linq;
+using System.Threading.Tasks;
 
 namespace OpenMined.Syft.Tensor
 {
@@ -16,7 +18,6 @@ namespace OpenMined.Syft.Tensor
         private int sibling;
 
         private IntTensorFactory factory;
-
 
         public IntTensor()
         {
@@ -36,10 +37,10 @@ namespace OpenMined.Syft.Tensor
             bool _keepgrads = false,
             string _creation_op = null)
         {
+
             factory = _factory;
             dataOnGpu = _dataOnGpu;
             creation_op = _creation_op;
-
 
             // First: check that shape is valid.
             if (_shape == null || _shape.Length == 0)
@@ -63,7 +64,6 @@ namespace OpenMined.Syft.Tensor
                 // looks like we have GPU data being passed in... initialize a GPU tensor.
 
                 InitGpu(_shader, _dataBuffer, _shapeBuffer, _copyData);
-                initShaderKernels();
             }
             else
             {
@@ -130,61 +130,72 @@ namespace OpenMined.Syft.Tensor
             if (SystemInfo.supportsComputeShaders && shader == null)
             {
                 shader = factory.GetShader();
+                initShaderKernels();
             }
-
-        }
-
-        public void initShaderKernels()
-        {
-            // TODO: move to IntegerTensor.ShaderOps.cs (doesn't exist yet)
-            throw new NotImplementedException();
-        }
-
-
-        public IntTensor Copy()
-        {
-            throw new NotImplementedException();
-        }
-
-        public IntTensor Add(int value, bool inline)
-        {
-            throw new NotImplementedException();
-        }
-
-        public IntTensor View(int[] new_shape, bool inline = true, FloatTensor result = null)
-        {
-            if (!IsContiguous()) {
-                throw new InvalidOperationException ("Tensor must be contiguous, call Contiguous() to convert");
-            }
-            if (inline == true)
-            {
-                
-                this.Shape = new_shape;
-
-                if (dataOnGpu)
-                {
-                    shapeBuffer.Release();
-                    shapeBuffer = new ComputeBuffer(shape.Length, sizeof(int));
-                    shapeBuffer.SetData(shape);
-                    
-                }
-                
-                setStridesAndCheckShape();
-
-                return this;
-
-            }
-            else
-            {
-                throw new NotImplementedException();
-            }
-            
         }
         
         public override string ProcessMessage(Command msgObj, SyftController ctrl)
         {
             switch (msgObj.functionCall)
             {
+                case "abs":
+                {
+                    var result = this.Abs();
+                    return result.id + "";
+                }
+                case "abs_":
+                {
+                    var result = this.Abs(inline:true);
+                    return result.id + "";
+                }
+                case "lt":
+                {
+                    var compareToTensor = factory.Get(int.Parse(msgObj.tensorIndexParams[0]));
+                    var result = this.Lt(compareToTensor);
+                    return result.id + "";
+                }
+                case "lt_":
+                {
+                    var compareToTensor = factory.Get(int.Parse(msgObj.tensorIndexParams[0]));
+                    this.Lt(compareToTensor, inline: true);
+                    return this.id + "";
+                }
+                case "add_elem":
+                {
+                    Debug.LogFormat("add_elem");
+                    var tensor_1 = factory.Get(int.Parse(msgObj.tensorIndexParams[0]));
+                    var result = this.Add(tensor_1);
+                    return result.id + "";
+                }
+                case "add_elem_":
+                {
+                    Debug.LogFormat("add_elem_");
+                    var tensor_1 = factory.Get(int.Parse(msgObj.tensorIndexParams[0]));
+                    this.Add(tensor_1, inline: true);
+                    return this.id + "";
+                }
+                case "add_scalar":
+                {
+                    Debug.LogFormat("add_scalar");
+                    IntTensor result = this.Add(int.Parse(msgObj.tensorIndexParams[0]));
+                    return result.Id + "";
+                }
+                case "add_scalar_":
+                {
+                    Debug.LogFormat("add_scalar_");
+                    this.Add(int.Parse(msgObj.tensorIndexParams[0]), inline: true);
+                    return this.id + "";
+                }
+                case "cos":
+                {
+                    var result = Cos();
+                    return result.Id.ToString();
+                } 
+                case "equal":
+                {
+                    var tensor_1 = factory.Get(int.Parse(msgObj.tensorIndexParams[0]));
+                    return Convert.ToString(this.Equal(tensor_1));
+                }
                 case "get":
                 {
                     var param_to_get = msgObj.tensorIndexParams[0];
@@ -247,7 +258,98 @@ namespace OpenMined.Syft.Tensor
                     }
                     return "param not found or not configured with a getter";
                 }
-                    
+                case "sign":
+                {
+                    var result = this.Sign();
+                    return result.id + "";
+                }
+                case "pow_scalar":
+                {
+                    Debug.LogFormat("pow_scalar");
+                    var result = this.Pow(int.Parse(msgObj.tensorIndexParams[0]));
+                    return result.id + "";
+                }
+                case "pow_scalar_":
+                {
+                  Debug.LogFormat("pow_scalar_");
+                  this.Pow(int.Parse(msgObj.tensorIndexParams[0]), inline: true);
+                  return this.id + "";
+                }
+
+                case "pow_elem":
+                {
+                    Debug.LogFormat("pow_elem");
+                    var tensor_1 = factory.Get(int.Parse(msgObj.tensorIndexParams[0]));
+                    var result = this.Pow(tensor_1);
+                    return result.id + "";
+                }
+                case "pow_elem_":
+                {
+                    Debug.LogFormat("pow_elem_");
+                    var tensor_1 = factory.Get(int.Parse(msgObj.tensorIndexParams[0]));
+                    this.Pow(tensor_1, inline: true);
+                    return this.id + "";
+                }
+                case "sub_elem":
+                {
+                    Debug.LogFormat("sub_elem");
+                    var tensor_1 = factory.Get(int.Parse(msgObj.tensorIndexParams[0]));
+                    var result = this.Sub(tensor_1);
+                    return result.id + "";
+                }
+                case "sub_elem_":
+                {
+                    Debug.LogFormat("sub_elem_");
+                    var tensor_1 = factory.Get(int.Parse(msgObj.tensorIndexParams[0]));
+                    this.Sub(tensor_1, inline: true);
+                    return this.id + "";
+                }
+                case "sub_scalar":
+                {
+                    Debug.LogFormat("sub_scalar");
+                    IntTensor result = this.Sub(int.Parse(msgObj.tensorIndexParams[0]));
+                    return result.Id + "";
+                }
+                case "sub_scalar_":
+                {
+                    Debug.LogFormat("sub_scalar_");
+                    this.Sub(int.Parse(msgObj.tensorIndexParams[0]), inline: true);
+                    return this.id + "";
+                }
+                case "reciprocal":
+                {
+                    var result = Reciprocal();
+                    return result.id.ToString();
+                }
+                case "reciprocal_":
+                {
+                    Reciprocal(inline: true);
+                    return Id.ToString();
+                }
+                case "sqrt":
+                {
+                    var result = Sqrt();
+                    return result.Id + "";
+                }
+                
+                case "sin":
+                {
+                     var result = Sin();
+                     return result.Id.ToString();
+                }
+				case "neg":
+				{
+					Debug.LogFormat("neg");
+					var result = Neg();
+					return result.Id.ToString();
+				}
+
+				case "neg_":
+				{
+					Debug.LogFormat("neg_");
+					Neg(inline: true);
+					return Id.ToString();
+				}
                 case "to_numpy":
                 {
                     if (DataOnGpu)
@@ -263,6 +365,29 @@ namespace OpenMined.Syft.Tensor
                     }
                 }
 
+                case "tan":
+                {
+                    var result = Tan();
+                    return result.Id.ToString();
+                }
+                case "trace":
+                {
+                    var result = this.Trace();
+                    return result.ToString();
+                }
+                case "transpose":
+                {
+                    if (msgObj.tensorIndexParams.Length != 0)
+                        {
+                            var dim1 = int.Parse(msgObj.tensorIndexParams[0]);
+                            var dim2 = int.Parse(msgObj.tensorIndexParams[1]);
+                            return Transpose(dim1, dim2).Id.ToString();
+                        }
+                    else
+                        {
+                            return Transpose().Id.ToString();
+                        }
+                }
             }
             return "IntTensor.processMessage: Command not found:" + msgObj.functionCall;
         }

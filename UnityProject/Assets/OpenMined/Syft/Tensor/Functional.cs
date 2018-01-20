@@ -1,6 +1,9 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Diagnostics;
+using System.Runtime.InteropServices;
 using OpenMined.Syft.Tensor.Factories;
+using Debug = UnityEngine.Debug;
 
 namespace OpenMined.Syft.Tensor
 {
@@ -27,18 +30,17 @@ namespace OpenMined.Syft.Tensor
 
             return batches;
         }
-        
-        // opposite of batchify
-        public static FloatTensor Concatenate(FloatTensorFactory factory, List<int> tensor_ids, int axis, FloatTensor result = null)
+
+        public static FloatTensor Concatenate(FloatTensorFactory factory, FloatTensor[] tensors_inp, int axis, FloatTensor result = null)
         {
-            FloatTensor[] tensors = new FloatTensor[tensor_ids.Count-1];
-            for(int i=0; i<tensor_ids.Count-1; i++)
+            FloatTensor first = tensors_inp[0];
+
+            FloatTensor[] tensors = new FloatTensor[tensors_inp.Length-1];
+            for(int i=0; i<tensors_inp.Length-1; i++)
             {
-                tensors[i] = factory.Get(tensor_ids[i+1]);
+                tensors[i] = tensors_inp[i+1];
             }
-
-            FloatTensor first = factory.Get(tensor_ids[0]);
-
+            
             if(first.DataOnGpu)
                 throw new NotImplementedException("Can't concatenate GPU tensors yet");
 
@@ -48,8 +50,9 @@ namespace OpenMined.Syft.Tensor
 
             int[] first_indices = new int[first.Shape[axis]];
             for (int i = 0; i < first.Shape[axis]; i++) first_indices[i] = i + num_new_rows;
-            int_tensors_for_index_add.Add(factory.ctrl.intTensorFactory.Create(_shape: new int[1] {first.Shape[axis]},_data:first_indices));
-            
+            int_tensors_for_index_add.Add(
+                factory.ctrl.intTensorFactory.Create(_shape: new int[1] {first.Shape[axis]}, _data: first_indices));
+        
             num_new_rows += first.Shape[axis];
             
             foreach (FloatTensor tensor in tensors)
@@ -77,11 +80,15 @@ namespace OpenMined.Syft.Tensor
 
                 int[] indices = new int[tensor.Shape[axis]];
                 for (int i = 0; i < tensor.Shape[axis]; i++) indices[i] = i + num_new_rows;
-                int_tensors_for_index_add.Add(factory.ctrl.intTensorFactory.Create(_shape: new int[1] {tensor.Shape[axis]},_data:indices));
+                int_tensors_for_index_add.Add(
+                    factory.ctrl.intTensorFactory.Create(_shape: new int[1] {tensor.Shape[axis]}, _data: indices));
+            
                 
                 num_new_rows += tensor.Shape[axis];
             }
 
+            Debug.Log("Num new Rows:" + num_new_rows);
+            
             int[] concat_shape = new int[first.Shape.Length];
             
             for (int i = 0; i < first.Shape.Length; i++)
@@ -107,8 +114,11 @@ namespace OpenMined.Syft.Tensor
                     result.IndexAdd(int_tensors_for_index_add[i+1],axis,tensors[i],inline:true);
                 }
             } 
-            else 
+            else
             {
+
+                //Debug.Log("Result Size:" + result.Size);
+                //Debug.Log("First Size:" + first.Size);
                 
                 int result_i = 0;
 
@@ -120,6 +130,8 @@ namespace OpenMined.Syft.Tensor
                 
                 foreach (FloatTensor tensor in tensors)
                 {
+                    
+                    //Debug.Log("Tensor Size:" + tensor.Size);
                     for (int i = 0; i < tensor.Data.Length; i++)
                     {
                         result.Data[result_i] = tensor.Data[i];
@@ -128,15 +140,36 @@ namespace OpenMined.Syft.Tensor
                 }
 
             }
-            return result;            
+            return result;
+
         }
+        
+        // opposite of batchify
+        public static FloatTensor Concatenate(FloatTensorFactory factory, List<int> tensor_ids, int axis, FloatTensor result = null)
+        {
+            FloatTensor[] tensors = new FloatTensor[tensor_ids.Count];
+            for(int i=0; i<tensor_ids.Count; i++)
+            {
+                tensors[i] = factory.Get(tensor_ids[i]);
+            }
+            
+            return Concatenate(factory, tensors, axis, result);            
+        }
+        
+        // opposite of batchify
+        public static FloatTensor Concatenate(FloatTensorFactory factory, List<FloatTensor> tensors, int axis, FloatTensor result = null)
+        {
+           return Concatenate(factory, tensors.ToArray(), axis, result);            
+        }
+        
         public static FloatTensor Ones(FloatTensorFactory factory, int[] dims)
         {
             FloatTensor result = factory.ctrl.floatTensorFactory.Create(dims);
             result.Add(1.0F, inline: true);
             return result;
         }
-        public static FloatTensor Randn(FloatTensorFactory factory, int[] dims)
+        
+        public static FloatTensor Randn(FloatTensorFactory factory, int[] dims, int random_seed=0)
         {
         int dims_prod = 1;
             foreach (int dim in dims)
@@ -144,16 +177,18 @@ namespace OpenMined.Syft.Tensor
                 dims_prod *= dim;
             }
             FloatTensor result = factory.ctrl.floatTensorFactory.Create(dims);
+            if (random_seed > 0){ UnityEngine.Random.InitState (random_seed); }
             for (int i = 0; i < dims_prod; i++)
             {
                 // Reference: https://stackoverflow.com/questions/218060/random-gaussian-variables
-                float u1 = 1.0F - UnityEngine.Random.value;
-                float u2 = 1.0F - UnityEngine.Random.value;
-                result.Data[i] = Convert.ToSingle(Math.Sqrt(-2.0F * Math.Log(u1)) * Math.Sin(2.0F * Math.PI * u2));
+
+                double u1 = 1.0F - UnityEngine.Random.value;
+                double u2 = 1.0F - UnityEngine.Random.value;
+                result.Data[i] = Convert.ToSingle(Math.Sqrt(-2.0 * Math.Log(u1)) * Math.Sin(2.0 * Math.PI * u2));
             }
             return result.View(dims);
         }
-        public static FloatTensor Random(FloatTensorFactory factory, int[] dims)
+        public static FloatTensor Random(FloatTensorFactory factory, int[] dims, int random_seed=0)
         {
             int dims_prod = 1;
             foreach (int dim in dims)
@@ -161,6 +196,7 @@ namespace OpenMined.Syft.Tensor
                 dims_prod *= dim;
             }
             FloatTensor result = factory.ctrl.floatTensorFactory.Create(dims);
+            if (random_seed > 0){ UnityEngine.Random.InitState (random_seed); }
             for (int i = 0; i < dims_prod; i++)
             {
                 result.Data[i] = UnityEngine.Random.value;

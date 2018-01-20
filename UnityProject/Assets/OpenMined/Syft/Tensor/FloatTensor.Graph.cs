@@ -40,6 +40,12 @@ namespace OpenMined.Syft.Tensor
 		    	children_counts[i] = 0;
 	    }
 
+	    public void RemoveChild(int tensorId)
+	    {
+	        bool deleted = this.children_indices.Remove(tensorId);
+	        if(deleted) this.children_counts.RemoveAt(0);
+	    }
+
 	    public FloatTensor HookGraph(ref FloatTensor result, 
 		    						string creation_op, 
 		    						bool inline, 
@@ -80,6 +86,8 @@ namespace OpenMined.Syft.Tensor
 						{
 							child_pre_initialized = true;
 							child_index = children_indices[i];
+							// Keep track of how often each tensor is used for safe deletion
+							child.Usage_count = child.Usage_count + 1;
 							break;
 						}
 						
@@ -90,14 +98,11 @@ namespace OpenMined.Syft.Tensor
 							if (child.creators.Count > 1)
 								if (factory.Get(child.creators[1]).data[0] != scalar_input)
 									keep_looking = true;
-
-
 						
-						if (tensor_inputs != null && tensor_inputs.Length == 1)
+						if (tensor_inputs != null && tensor_inputs.Length >= 1)
 							foreach(FloatTensor tensor in tensor_inputs)
 								if (!child.creators.Contains(tensor.id))
 									keep_looking = true;
-						
 
 						if (keep_looking)
 							continue;
@@ -105,6 +110,8 @@ namespace OpenMined.Syft.Tensor
 						// found a child that matches all parameters
 						child_pre_initialized = true;
 						child_index = children_indices[i];
+						// Keep track of how often each tensor is used for safe deletion
+                        child.Usage_count = child.Usage_count + 1;
 						break;
 
 					}
@@ -172,7 +179,6 @@ namespace OpenMined.Syft.Tensor
 				result.InitGraph();
 				result.creators.Add(this.id);
 				result.creation_op = creation_op;
-				
 				children_indices.Add(result.Id);
 				children_counts.Add(0);
 				

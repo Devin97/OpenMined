@@ -5,6 +5,7 @@ using JetBrains.Annotations;
 using OpenMined.Network.Controllers;
 using OpenMined.Network.Utils;
 using OpenMined.Syft.Tensor;
+using Newtonsoft.Json.Linq;
 
 namespace OpenMined.Syft.Layer
 {
@@ -46,7 +47,7 @@ namespace OpenMined.Syft.Layer
             throw new ArgumentOutOfRangeException("Parameter " + i + " does not exist.");
         }
         
-        public List<int> getParameters()
+        public virtual List<int> getParameters()
         {
             return parameters;
         }
@@ -58,20 +59,34 @@ namespace OpenMined.Syft.Layer
 
             switch (msgObj.functionCall)
             {
-            case "forward": 
-                return ProcessForwardMessage (msgObj, ctrl);
-            case "params":
-                return ProcessParamsMessage (msgObj, ctrl);
-            case "param_count":
-                return getParameterCount()+"";
-            case "activation":
+                case "forward":
+                    return ProcessForwardMessage(msgObj, ctrl);
+                case "params":
+                    return ProcessParamsMessage(msgObj, ctrl);
+                case "param_count":
+                    return getParameterCount() + "";
+                case "activation":
                 {
-                    return activation + "";   
+                    return activation + "";
                 }
-            case "model_type":
+                case "model_type":
                 {
                     return model_type;
                 }
+                case "zero_grad":
+                {
+                    ProcessZeroGradMessage();
+                    return "";
+                }
+
+                case "set_id":
+                {
+                    int new_id = int.Parse(msgObj.tensorIndexParams[0]);
+                    this.controller.setModelId(this.Id,new_id);
+                    this.id = new_id;
+                    return "";
+                }
+        
             }
 
             return ProcessMessageAsLayerOrLoss(msgObj, ctrl);
@@ -100,8 +115,26 @@ namespace OpenMined.Syft.Layer
             }
             return out_str;
         }
+        
+        public void ProcessZeroGradMessage()
+        {
+            foreach (int param_index in parameters)
+            {
+                if(controller.floatTensorFactory.Get(param_index).Grad != null)
+                {
+                    controller.floatTensorFactory.Get(param_index).Grad.Zero_();
+                }
+            }
+        }
 
         protected abstract string ProcessForwardMessage (Command msgObj, SyftController ctrl);
 
+        public virtual JToken GetConfig () 
+        {   
+            return new JObject
+            {
+                { "backend", "Model.GetConfig not implemented" }
+            };
+        }
     }
 }
